@@ -34,9 +34,9 @@ def get_prompt(text):
     return message
 
 
-def llm(title, detail):
+def llm(row):
     
-    prompt = get_prompt(title + ' ' + detail)
+    prompt = get_prompt('　'.join(row))
     
     modelId = 'anthropic.claude-3-5-sonnet-20240620-v1:0'
     accept = 'application/json'
@@ -79,17 +79,17 @@ def llm(title, detail):
     return get_data['judge']
 
 
-def mail(status, table, item_id, title, detail):
+def mail(status, table, item_id, row):
     
     subject = f'AI自動検証で{status}になりました【電波祭実行委員会】'
     
     if status == 'reject':
-        comment = f'結果に問題がある場合にはお手数をおかけしますが下記URLよりご対応お願いします。\nhttps://denpafest.com/inspection/{table}/{item_id}'
+        comment = f'結果に問題がある場合にはお手数をおかけしますが、下記URLよりご対応お願いします。\nhttps://denpafest.com/organization?next=/inspection/{table}/{item_id}'
     
     else:
         status = 'pending'
         subject = '[要対応] ' + subject
-        comment = f'お手数をおかけしますが、下記URLよりご対応お願いします。\nhttps://denpafest.com/inspection/{table}/{item_id}'
+        comment = f'お手数をおかけしますが、下記URLよりご対応お願いします。\nhttps://denpafest.com/organization?next=/inspection/{table}/{item_id}'
     
     message = f'''
 ユーザーから送信された内容がAI自動検証にて{status}になりましたことをご連絡いたします。
@@ -103,11 +103,8 @@ def mail(status, table, item_id, title, detail):
 ■ID
 　{item_id}
 
-■タイトル
-　{title}
-
 ■内容
-　{detail}
+　{'\n　'.join(row)}
 
 {comment}
     '''
@@ -133,16 +130,22 @@ def inspection(table, item_id, allow_approve):
     with get_connection() as conn:
         with conn.cursor() as cur:
             table_name = 'api_' + table + 'data'
-            cur.execute(f'SELECT title, detail FROM {table_name} WHERE id = %s', (str(item_id),))
+            
+            if table == 'news':
+                select = 'title, detail'
+            elif table == 'event':
+                select = 'title, detail, place'
+            elif table == 'shop':
+                select = 'name, address, detail'
+            elif table == 'menu':
+                select = 'name'
+            
+            cur.execute(f'SELECT {select} FROM {table_name} WHERE id = %s', (str(item_id),))
             
             row = cur.fetchone()
             if row == None:
                 return
-            title = row[0]
-            detail = row[1]
-            # print(title)
-            # print(detail)
-            status = llm(title, detail)
+            status = llm(row)
             
             table_name = 'api_' + table + 'inspectiondata'
             
@@ -153,10 +156,11 @@ def inspection(table, item_id, allow_approve):
                 cur.execute(f'UPDATE {table_name} SET ai = true, deleted = true WHERE {table}_id = %s', (str(item_id),))
             
             else:
+                status = 'pending'
                 cur.execute(f'UPDATE {table_name} SET ai = true WHERE {table}_id = %s', (str(item_id),))
             
             if status != 'approve':
-                mail(status, table, str(item_id), title, detail)
+                mail(status, table, str(item_id), row)
             
         conn.commit()
 
@@ -164,7 +168,7 @@ def inspection(table, item_id, allow_approve):
 def lambda_handler(event, context):
 
     for item in event['Records']:
-        # print(item)
+        print(item)
         msg = item['body'].split(',')
         table = msg[0]
         item_id = msg[1]
